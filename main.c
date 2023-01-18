@@ -21,7 +21,7 @@ cmask has_cmask(cmask c, val v) { return c & val_cmask(v); }
 int n_cmask(cmask c)
 {
   int n = 0;
-  for(int i = 0; i < 9; i++)
+  for(val i = 0; i < 9; i++)
     if(c & (1 << i)) n++;
   return n;
 }
@@ -48,14 +48,14 @@ val char_val(char c)
 }
 val cmask_val(cmask c)
 {
-  for(int i = 0; i < 9; i++)
+  for(val i = 0; i < 9; i++)
     if(c == (1 << i)) return i+1;
   return val_invalid;
 }
 int cmask_cands(cmask c)
 {
   int n = 0;
-  for(int i = 0; i < 9; i++)
+  for(val i = 0; i < 9; i++)
     if(c & (1 << i)) n++;
   return n;
 }
@@ -88,18 +88,18 @@ void print_state(board *b);
 int solve(board *b, error *err);
 void print_board_depth(int depth, board *b);
 void print_state_depth(int depth, board *b);
-int solve_depth(int depth, board *b, error *err);
+int solve_depth(int depth, int maxdepth, board *b, error *err);
 
 void zero_board(board *b)
 {
-  for(int i = 0; i < 9*9; i++)
+  for(inde i = 0; i < 9*9; i++)
   {
     b->tiles[i].v = val_invalid;
     b->tiles[i].cs = cmask_all;
   }
-  for(int i = 0; i < 9; i++)
+  for(int i = 0; i < 9; i++) //per group
   {
-    for(int j = 0; j < 9; j++)
+    for(int j = 0; j < 9; j++) //per tile/val interchangeably
     {
       b->rows[i].i = i;
       b->rows[i].ccounts[j] = 9;
@@ -246,7 +246,7 @@ int find_tile_stamps(int depth, board *b, error *err)
 int find_group_stamps(int depth, group *g, board *b, error *err)
 {
   int stamps = 0;
-  for(int i = 0; i < 9; i++)
+  for(val i = 0; i < 9; i++)
   {
     if(g->ccounts[i] == 1)
     {
@@ -356,18 +356,22 @@ int find_stamps(int depth, board *b, error *err)
   return changes;
 }
 
-int find_brute_tile_stamps(int depth, int breadth, board *b, error *err)
+int find_brute_tile_stamps(int depth, int maxdepth, int breadth, board *b, error *err)
 {
   int stamps = 0;
   for(inde i = 0; i < 9*9; i++)
   {
-    if(b->tiles[i].v == val_invalid && n_cmask(b->tiles[i].cs) <= breadth)
+    if(b->tiles[i].v == val_invalid && n_cmask(b->tiles[i].cs) == breadth)
     {
       //debugf("trying (%d,%d) with %d candidates\n",ind_col(i),ind_row(i),n_cmask(b->tiles[i].cs));
       val v = 0;
       while((v = next_cmask(b->tiles[i].cs, v+1)))
       {
-        debugf("giving %d @ (%d,%d) a go\n",v,ind_col(i),ind_row(i));
+        /*
+        logf("giving %d @ (%d,%d) a go (depth %d)\n",v,ind_col(i),ind_row(i),depth);
+        print_board_depth(depth, b);
+        logf("\n");
+        */
 
         error eerr = 0;
         board eb;
@@ -376,7 +380,7 @@ int find_brute_tile_stamps(int depth, int breadth, board *b, error *err)
         stamps += stamp_val(depth+1, i, v, &eb, &eerr);
         if(eerr) continue;
 
-        stamps += solve_depth(depth+1, &eb, &eerr);
+        stamps += solve_depth(depth+1, maxdepth, &eb, &eerr);
         if(eerr) continue;
 
         memcpy(b,&eb,sizeof(board));
@@ -388,20 +392,37 @@ int find_brute_tile_stamps(int depth, int breadth, board *b, error *err)
   return stamps;
 }
 
-int find_brute_group_stamps(int depth, int breadth, group *g, board *b, error *err)
+int find_brute_group_stamps(int depth, int maxdepth, int breadth, group *g, board *b, error *err)
 {
   int stamps = 0;
-  for(int i = 0; i < 9; i++)
+  for(val i = 0; i < 9; i++)
   {
-    if(g->ccounts[i] == 1)
+    if(g->ccounts[i] == breadth)
     {
       for(int j = 0; j < 9; j++)
       {
         inde ind = g->inds[j];
         if(b->tiles[ind].cs & (1 << i))
         {
-          stamps += stamp_val(depth, ind, i+1, b, err);
-          if(*err) return 0;
+          val v = i+1;
+          /*
+          logf("giving %d @ (%d,%d) a go (depth %d)\n",v,ind_col(i),ind_row(i),depth);
+          print_board_depth(depth, b);
+          logf("\n");
+          */
+
+          error eerr = 0;
+          board eb;
+          memcpy(&eb,b,sizeof(board));
+
+          stamps += stamp_val(depth+1, ind, v, &eb, &eerr);
+          if(eerr) continue;
+
+          stamps += solve_depth(depth+1, maxdepth, &eb, &eerr);
+          if(eerr) continue;
+
+          memcpy(b,&eb,sizeof(board));
+          return stamps;
         }
       }
     }
@@ -409,59 +430,83 @@ int find_brute_group_stamps(int depth, int breadth, group *g, board *b, error *e
   return stamps;
 }
 
-int brute_stamps(int depth, int breadth, board *b, error *err)
+int brute_stamps(int depth, int maxdepth, int breadth, board *b, error *err)
 {
-  debugf("bruting stamps\n");
-  print_board_depth(depth, b);
+  if(depth >= maxdepth) { errf("depth greater than %d\n", maxdepth); *err = -1; return 0; }
+
   int changes = 0;
-  changes += find_brute_tile_stamps(depth, breadth, b, err); if(*err) return 0;
+  changes += find_brute_tile_stamps(depth, maxdepth, breadth, b, err); if(*err) return 0;
   if(changes) return changes; //early exit to see if lower hanging derivations
 
-/*
-  for(int i = 0; i < 9; i++) { changes += find_brute_group_stamps(breadth, &b->rows[i], b, err); if(*err) return 0; }
+  for(int i = 0; i < 9; i++) { changes += find_brute_group_stamps(depth, maxdepth, breadth, &b->rows[i], b, err); if(*err) return 0; }
   if(changes) return changes; //early exit to see if lower hanging derivations
-  for(int i = 0; i < 9; i++) { changes += find_brute_group_stamps(breadth, &b->cols[i], b, err); if(*err) return 0; }
+  for(int i = 0; i < 9; i++) { changes += find_brute_group_stamps(depth, maxdepth, breadth, &b->cols[i], b, err); if(*err) return 0; }
   if(changes) return changes; //early exit to see if lower hanging derivations
-  for(int i = 0; i < 9; i++) { changes += find_brute_group_stamps(breadth, &b->boxs[i], b, err); if(*err) return 0; }
+  for(int i = 0; i < 9; i++) { changes += find_brute_group_stamps(depth, maxdepth, breadth, &b->boxs[i], b, err); if(*err) return 0; }
   if(changes) return changes; //early exit to see if lower hanging derivations
-*/
 
   return changes;
 }
 
-int solve_depth(int depth, board *b, error *err)
+int solve_derive(int depth, board *b, error *err)
 {
   int changes = 0;
-
   int found_changes = 0;
   while((found_changes = find_stamps(depth, b, err)))
   {
-    if(*err) return 0;
     changes += found_changes;
     //print_state(b);
   }
-
-  changes += brute_stamps(depth, 2, b, err);
   if(*err) return 0;
 
   return changes;
 }
-int solve(board *b, error *err) { return solve_depth(0,b,err); }
 
-int consume_rows(char *rows, board *b, error *err)
+int solve_depth(int depth, int maxdepth, board *b, error *err)
+{
+  int changes = solve_derive(depth, b, err);
+  if(*err) return 0;
+
+  if(b->n_vals < 9*9)
+  {
+    changes += brute_stamps(depth, maxdepth, 2, b, err);
+    if(*err) return 0;
+  }
+
+  return changes;
+}
+int solve(board *b, error *err)
+{
+  int depth = 0;
+  int maxdepth = 5;
+  int maxmaxdepth = 10;
+
+  int changes = solve_derive(depth, b, err);
+  if(*err) return 0;
+
+  while(b->n_vals < 9*9 &&  maxdepth < maxmaxdepth)
+  {
+    changes += brute_stamps(depth, maxdepth, 2, b, err);
+    if(*err) return 0;
+  }
+
+  return changes;
+}
+
+int consume_tiles(char *tiles, board *b, error *err)
 {
   int i = 0;
   inde ind = 0;
-  while(rows[i])
+  while(tiles[i])
   {
-    if(rows[i] == ' ' || rows[i] == '\n')
+    if(tiles[i] == ' ' || tiles[i] == '\n')
       ; //ignore
     else
     {
-      val v = char_val(rows[i]);
+      val v = char_val(tiles[i]);
       if(v != val_invalid)
       {
-        if(stamp_val(0, ind, char_val(rows[i]), b, err))
+        if(stamp_val(0, ind, char_val(tiles[i]), b, err))
         {
           //print_state(b);
           if(*err) return 0;
@@ -474,14 +519,14 @@ int consume_rows(char *rows, board *b, error *err)
   return 1;
 }
 
-int consume_tight_rows(char *rows, board *b, error *err)
+int consume_tight_tiles(char *tiles, board *b, error *err)
 {
   for(int i = 0; i < 9; i++)
   {
     for(int j = 0; j < 9; j++)
     {
       inde ti = xy_ind(j,i);
-      char rc = rows[i*9+j];
+      char rc = tiles[i*9+j];
       val v = char_val(rc);
       if(v != val_invalid)
         if(stamp_val(0, ti, char_val(rc), b, err)) if(*err) return 0;
@@ -497,20 +542,9 @@ void print_line()
 
 void print_board_depth(int depth, board *b)
 {
-  static int ignore = 0;
-  if(depth)
-  {
-    ignore++;
-    if(ignore < 10000000)
-      return;
-    ignore = 0;
-  }
-
-  logf("(%d vals, %d candidates)\n", b->n_vals, b->n_cands);
+  //logf("(%d vals, %d candidates)\n", b->n_vals, b->n_cands);
   for(int i = 0; i < 9; i++)
   {
-    for(int j = 0; j < depth; j++)
-      printf("-");
     for(int j = 0; j < 9; j++)
     {
       inde ti = xy_ind(j,i);
@@ -521,7 +555,9 @@ void print_board_depth(int depth, board *b)
         logf("%d",b->tiles[ti].v);
       if((j+1)%3 == 0) logf(" ");
     }
-      logf("\n");
+    for(int j = 0; j < depth; j++)
+      printf("-");
+    logf("\n");
     if(i != 8)
     {
       if((i+1)%3 == 0) logf("\n");
@@ -579,20 +615,7 @@ int main(int argc, char **argv)
 
   zero_board(&b);
 
-/*
-  char rows[9*9] =
-  "001000000"
-  "000000000"
-  "000000000"
-  "000000000"
-  "000000000"
-  "000000000"
-  "000000000"
-  "000000000"
-  "000000000";
-*/
-
-  char *rows =
+  char *tiles =
 
 /*//blank
 "... ... ..."
@@ -650,7 +673,7 @@ int main(int argc, char **argv)
 "... 5.. ...";
 //*/
 
-  consume_rows(rows, &b, &err);
+  consume_tiles(tiles, &b, &err);
   if(err) { logf("error consuming\n"); return 1; }
 
   logf("before: (%d vals, %d candidates)\n", b.n_vals, b.n_cands);
@@ -662,8 +685,6 @@ int main(int argc, char **argv)
 
   logf("after: (%d vals, %d candidates)\n", b.n_vals, b.n_cands);
   print_board(&b);
-  logf("\n");
-  print_board_cmasks(&b);
   logf("\n");
 
   return 0;
