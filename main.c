@@ -361,32 +361,62 @@ int find_brute_tile_stamps(int depth, int maxdepth, int breadth, board *b, error
   int stamps = 0;
   for(inde i = 0; i < 9*9; i++)
   {
-    if(b->tiles[i].v == val_invalid && n_cmask(b->tiles[i].cs) == breadth)
+    if(b->tiles[i].v == val_invalid)
     {
-      //debugf("trying (%d,%d) with %d candidates\n",ind_col(i),ind_row(i),n_cmask(b->tiles[i].cs));
-      val v = 0;
-      while((v = next_cmask(b->tiles[i].cs, v+1)))
+      int n_cs = n_cmask(b->tiles[i].cs);
+      if(n_cs == breadth)
       {
-        /*
-        logf("giving %d @ (%d,%d) a go (depth %d)\n",v,ind_col(i),ind_row(i),depth);
-        print_board_depth(depth, b);
-        logf("\n");
-        */
+        //debugf("trying (%d,%d) with %d candidates\n",ind_col(i),ind_row(i),n_cmask(b->tiles[i].cs));
+        int maxdepths_hit = 0;
+        val maxdepths_hit_v = 0;
+        val v = 0;
+        while((v = next_cmask(b->tiles[i].cs, v+1)))
+        {
+          /*
+          logf("giving %d @ (%d,%d) a go (depth %d)\n",v,ind_col(i),ind_row(i),depth);
+          print_board_depth(depth, b);
+          logf("\n");
+          */
 
-        error eerr = 0;
-        board eb;
-        memcpy(&eb,b,sizeof(board));
+          n_cs--;
+          if(n_cs == 0 && maxdepths_hit == 0)
+          {
+            stamps += stamp_val(depth, i, v, b, err);
+            if(*err) return 0;
+          }
+          else
+          {
+            error eerr = 0;
+            board eb;
+            memcpy(&eb,b,sizeof(board));
 
-        stamps += stamp_val(depth+1, i, v, &eb, &eerr);
-        if(eerr) continue;
+            int estamps = 0;
 
-        stamps += solve_depth(depth+1, maxdepth, &eb, &eerr);
-        if(eerr) continue;
+            estamps += stamp_val(depth+1, i, v, &eb, &eerr);
+            if(eerr) continue;
 
-        memcpy(b,&eb,sizeof(board));
-        return stamps;
+            estamps += solve_depth(depth+1, maxdepth, &eb, &eerr);
+            if(eerr == 1)
+            {
+              maxdepths_hit++;
+              maxdepths_hit_v = v;
+              continue;
+            }
+            else if(eerr) continue;
+
+            memcpy(b,&eb,sizeof(board));
+            stamps += estamps;
+          }
+
+          return stamps;
+        }
+        if(maxdepths_hit == 1)
+        {
+          stamps += stamp_val(depth, i, maxdepths_hit_v, b, err);
+          if(*err) return 0;
+          return stamps;
+        }
       }
-
     }
   }
   return stamps;
@@ -397,33 +427,62 @@ int find_brute_group_stamps(int depth, int maxdepth, int breadth, group *g, boar
   int stamps = 0;
   for(val i = 0; i < 9; i++)
   {
-    if(g->ccounts[i] == breadth)
+    int n_counts = g->ccounts[i];
+    if(n_counts == breadth)
     {
+      val v = i+1;
+      int maxdepths_hit = 0;
+      int maxdepths_hit_j = -1;
       for(int j = 0; j < 9; j++)
       {
         inde ind = g->inds[j];
         if(b->tiles[ind].cs & (1 << i))
         {
-          val v = i+1;
           /*
           logf("giving %d @ (%d,%d) a go (depth %d)\n",v,ind_col(i),ind_row(i),depth);
           print_board_depth(depth, b);
           logf("\n");
           */
 
-          error eerr = 0;
-          board eb;
-          memcpy(&eb,b,sizeof(board));
+          n_counts--;
+          if(n_counts == 0 && maxdepths_hit == 0)
+          {
+            stamps += stamp_val(depth, ind, v, b, err);
+            if(*err) return 0;
+          }
+          else
+          {
+            error eerr = 0;
+            board eb;
+            memcpy(&eb,b,sizeof(board));
 
-          stamps += stamp_val(depth+1, ind, v, &eb, &eerr);
-          if(eerr) continue;
+            int estamps = 0;
 
-          stamps += solve_depth(depth+1, maxdepth, &eb, &eerr);
-          if(eerr) continue;
+            estamps += stamp_val(depth+1, ind, v, &eb, &eerr);
+            if(eerr) continue;
 
-          memcpy(b,&eb,sizeof(board));
+            estamps += solve_depth(depth+1, maxdepth, &eb, &eerr);
+            if(eerr == 1)
+            {
+              maxdepths_hit++;
+              maxdepths_hit_j = j;
+              continue;
+            }
+            else if(eerr) continue;
+
+            memcpy(b,&eb,sizeof(board));
+            stamps += estamps;
+          }
+
           return stamps;
         }
+      }
+
+      if(maxdepths_hit == 1)
+      {
+        stamps += stamp_val(depth, g->inds[maxdepths_hit_j], v, b, err);
+        if(*err) return 0;
+        return stamps;
       }
     }
   }
@@ -432,7 +491,7 @@ int find_brute_group_stamps(int depth, int maxdepth, int breadth, group *g, boar
 
 int brute_stamps(int depth, int maxdepth, int breadth, board *b, error *err)
 {
-  if(depth >= maxdepth) { errf("depth greater than %d\n", maxdepth); *err = -1; return 0; }
+  if(depth >= maxdepth) { errf("depth greater than %d\n", maxdepth); *err = 1; return 0; }
 
   int changes = 0;
   changes += find_brute_tile_stamps(depth, maxdepth, breadth, b, err); if(*err) return 0;
@@ -464,29 +523,37 @@ int solve_derive(int depth, board *b, error *err)
 
 int solve_depth(int depth, int maxdepth, board *b, error *err)
 {
-  int changes = solve_derive(depth, b, err);
-  if(*err) return 0;
-
-  if(b->n_vals < 9*9)
+  int changes = 0;
+  int found_changes = 0;
+  while((found_changes = solve_derive(depth, b, err)))
   {
-    changes += brute_stamps(depth, maxdepth, 2, b, err);
-    if(*err) return 0;
+    changes += found_changes;
+
+    if(b->n_vals < 9*9)
+    {
+      found_changes += brute_stamps(depth, maxdepth, 2, b, err);
+      if(*err) return 0;
+      changes += found_changes;
+    }
+    else found_changes = 0;
   }
+  if(*err) return 0;
 
   return changes;
 }
 int solve(board *b, error *err)
 {
-  int depth = 0;
-  int maxdepth = 5;
+  int maxdepth = 1;
   int maxmaxdepth = 10;
 
-  int changes = solve_derive(depth, b, err);
+  int changes = solve_derive(0, b, err);
   if(*err) return 0;
 
   while(b->n_vals < 9*9 &&  maxdepth < maxmaxdepth)
   {
-    changes += brute_stamps(depth, maxdepth, 2, b, err);
+    maxdepth++;
+    //debugf("maxdepth: %d\n",maxdepth);
+    changes += brute_stamps(0, maxdepth, 2, b, err);
     if(*err) return 0;
   }
 
@@ -676,14 +743,27 @@ int main(int argc, char **argv)
   consume_tiles(tiles, &b, &err);
   if(err) { logf("error consuming\n"); return 1; }
 
-  logf("before: (%d vals, %d candidates)\n", b.n_vals, b.n_cands);
+  logf("input:\n");
   print_board(&b);
   logf("\n");
+
+  //#define PROFILE
+  #ifdef PROFILE
+  board save;
+  memcpy(&save,&b,sizeof(board));
+  for(int i = 0; i < 10000; i++)
+  {
+    memcpy(&b,&save,sizeof(board));
+    solve(&b, &err);
+    if(err) { logf("error solving\n"); return 1; }
+  }
+  #endif //PROFILE
 
   solve(&b, &err);
   if(err) { logf("error solving\n"); return 1; }
 
-  logf("after: (%d vals, %d candidates)\n", b.n_vals, b.n_cands);
+  if(b.n_vals == 9*9) logf("solved:\n");
+  else                logf("unsolved: (%d vals, %d candidates)\n", b.n_vals, b.n_cands);
   print_board(&b);
   logf("\n");
 
